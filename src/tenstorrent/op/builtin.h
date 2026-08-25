@@ -33,6 +33,12 @@ TVM_DLL const Op &pipe_src();
 TVM_DLL const Op &pipe_dst();
 TVM_DLL const Op &pipe_dst_range();
 
+/*!
+ * \brief Transfer a complete shared-memory payload through a selected Pipe.
+ */
+TVM_DLL const Op &pipe_send();
+TVM_DLL const Op &pipe_recv();
+
 } // namespace tenstorrent
 } // namespace tl
 } // namespace tvm

@@ -1,7 +1,7 @@
 import json
 
 import pytest
-from tvm import tirx
+from tvm import ir, tirx
 from tvm.ir import Op
 
 from tilelang.tenstorrent import language as T
@@ -19,6 +19,17 @@ def _collect_calls_and_foreach_loops(func):
 
     tirx.stmt_functor.post_order_visit(func.body, visit)
     return calls, loops
+
+
+def _collect_op_calls(func, op_name):
+    calls = []
+
+    def visit(node):
+        if isinstance(node, tirx.Call) and isinstance(node.op, Op) and node.op.name == op_name:
+            calls.append(node)
+
+    tirx.stmt_functor.post_order_visit(func.body, visit)
+    return calls
 
 
 def test_topology_primitives_construct_ordered_ir():
@@ -138,3 +149,158 @@ def test_selected_pipe_accessors_validate_region_and_contract():
             with T.Kernel(2, 1, threads=1):
                 for pipe in T.tt.foreach_src(collective):
                     T.tt.pipe_dst(pipe)
+
+
+def test_copy_constructs_pipe_send_and_recv_with_complete_regions():
+    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+
+    @T.prim_func
+    def main():
+        with T.Kernel(2, 1, threads=1):
+            send_block = T.alloc_shared((4, 8), T.float32)
+            recv_block = T.alloc_shared((4, 8), T.float32)
+            for pipe in T.tt.foreach_src(net):
+                T.copy(send_block, pipe)
+            for pipe in T.tt.foreach_dst(net):
+                T.copy(pipe, recv_block)
+
+    calls, loops = _collect_calls_and_foreach_loops(main)
+    send = next(call for call in calls if call.op.name == "tl.tt.pipe_send")
+    recv = next(call for call in calls if call.op.name == "tl.tt.pipe_recv")
+    assert send.args[1].same_as(loops[0].loop_var)
+    assert recv.args[0].same_as(loops[1].loop_var)
+
+    send_region = send.args[0]
+    recv_region = recv.args[1]
+    for region, access_type in ((send_region, 1), (recv_region, 2)):
+        assert isinstance(region, tirx.Call)
+        assert region.op.name == "tl.tileop.region"
+        assert isinstance(region.args[0], tirx.BufferLoad)
+        assert region.args[0].buffer.scope() == "shared.dyn"
+        assert all(ir.structural_equal(index, tirx.IntImm("int32", 0)) for index in region.args[0].indices)
+        assert int(region.args[1].value) == access_type
+        assert [int(extent.value) for extent in region.args[2:]] == [4, 8]
+
+
+def test_copy_without_pipe_ref_delegates_to_common_copy():
+    @T.prim_func
+    def main():
+        with T.Kernel(1, 1, threads=1):
+            src = T.alloc_shared((4, 8), T.float32)
+            dst = T.alloc_shared((4, 8), T.float32)
+            T.copy(src, dst, annotations={"test.copy": 1})
+
+    calls = _collect_op_calls(main, "tl.tileop.copy")
+    assert len(calls) == 1
+    assert calls[0].annotations["test.copy"] == 1
+
+
+def test_copy_rejects_wrong_pipe_direction():
+    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+
+    with pytest.raises(ValueError, match="send requires.*foreach_src"):
+
+        @T.prim_func
+        def send_from_destination():
+            with T.Kernel(2, 1, threads=1):
+                block = T.alloc_shared((4, 8), T.float32)
+                for pipe in T.tt.foreach_dst(net):
+                    T.copy(block, pipe)
+
+    with pytest.raises(ValueError, match="receive requires.*foreach_dst"):
+
+        @T.prim_func
+        def receive_at_source():
+            with T.Kernel(2, 1, threads=1):
+                block = T.alloc_shared((4, 8), T.float32)
+                for pipe in T.tt.foreach_src(net):
+                    T.copy(pipe, block)
+
+
+def test_copy_rejects_pipe_ref_after_foreach_region():
+    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+    captured = []
+
+    def capture(pipe):
+        captured.append(pipe)
+        return 0
+
+    with pytest.raises(ValueError, match="only be used inside"):
+
+        @T.prim_func
+        def escaped_pipe():
+            with T.Kernel(2, 1, threads=1):
+                block = T.alloc_shared((4, 8), T.float32)
+                for pipe in T.tt.foreach_src(net):
+                    T.evaluate(capture(pipe))
+                T.copy(block, captured[0])
+
+
+def test_copy_rejects_global_and_partial_pipe_payloads():
+    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+
+    with pytest.raises(ValueError, match="shared or shared.dyn"):
+
+        @T.prim_func
+        def global_payload(src: T.Tensor((4, 8), T.float32)):
+            with T.Kernel(2, 1, threads=1):
+                for pipe in T.tt.foreach_src(net):
+                    T.copy(src, pipe)
+
+    with pytest.raises(TypeError, match="complete tirx.Buffer"):
+
+        @T.prim_func
+        def partial_payload():
+            with T.Kernel(2, 1, threads=1):
+                block = T.alloc_shared((4, 8), T.float32)
+                for pipe in T.tt.foreach_src(net):
+                    T.copy(block[0, 0], pipe)
+
+
+def test_copy_rejects_pipe_to_pipe_transfer():
+    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+
+    with pytest.raises(TypeError, match="PipeRef-to-PipeRef"):
+
+        @T.prim_func
+        def pipe_to_pipe():
+            with T.Kernel(2, 1, threads=1):
+                for send_pipe in T.tt.foreach_src(net):
+                    for recv_pipe in T.tt.foreach_dst(net):
+                        T.copy(send_pipe, recv_pipe)
+
+
+@pytest.mark.parametrize(
+    "recv_shape, recv_dtype",
+    [
+        ((4, 16), "float32"),
+        ((4, 8), "int32"),
+    ],
+)
+def test_copy_rejects_pipenet_payload_shape_or_dtype_mismatch(recv_shape, recv_dtype):
+    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+
+    with pytest.raises(ValueError, match="payload shape/dtype mismatch"):
+
+        @T.prim_func
+        def mismatched_payload():
+            with T.Kernel(2, 1, threads=1):
+                send_block = T.alloc_shared((4, 8), T.float32)
+                recv_block = T.alloc_shared(recv_shape, recv_dtype)
+                for pipe in T.tt.foreach_src(net):
+                    T.copy(send_block, pipe)
+                for pipe in T.tt.foreach_dst(net):
+                    T.copy(pipe, recv_block)
+
+
+def test_copy_rejects_non_default_options_for_pipe_transfer():
+    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+
+    with pytest.raises(ValueError, match="non-default copy options"):
+
+        @T.prim_func
+        def configured_pipe_copy():
+            with T.Kernel(2, 1, threads=1):
+                block = T.alloc_shared((4, 8), T.float32)
+                for pipe in T.tt.foreach_src(net):
+                    T.copy(block, pipe, coalesced_width=4)

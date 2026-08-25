@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import json
 from typing import Literal
 
-from tvm import tirx
+from tvm import ir, tirx
 
 from tilelang.language.eager.builder import Builder
 from tilelang.language.kernel import KernelLaunchFrame
@@ -99,7 +99,12 @@ def _builder_state() -> tuple[Builder, dict]:
         raise RuntimeError("T.tt topology primitives can only be used while constructing a TileLang PrimFunc")
     state = getattr(builder, "_tt_topology_state", None)
     if state is None:
-        state = {"pipenets": [], "foreach_frames": {}}
+        state = {
+            "pipenets": [],
+            "foreach_frames": {},
+            "foreach_vars": [],
+            "payload_contracts": [],
+        }
         builder._tt_topology_state = state
     return builder, state
 
@@ -196,6 +201,7 @@ def _foreach(net: PipeNet, side: PipeSide):
     frame = serial(0, len(net.pipes), annotations={annotation: _encode_pipenet(net)})
     _, state = _builder_state()
     state["foreach_frames"][id(frame)] = (frame, net, side)
+    state["foreach_vars"].extend((var, net, side) for var in frame.vars)
     return frame
 
 
@@ -211,9 +217,11 @@ def foreach_dst(net: PipeNet):
     return _foreach(net, "dst")
 
 
-def _selected_pipe(pipe: object) -> tuple[tirx.Var, PipeNet, PipeSide]:
+def _try_selected_pipe(pipe: object) -> tuple[tirx.Var, PipeNet, PipeSide] | None:
+    """Return active PipeRef metadata without treating ordinary values as pipes."""
+
     if not isinstance(pipe, tirx.Var):
-        raise TypeError("selected PipeRef must be the loop variable from T.tt.foreach_src/dst")
+        return None
     builder, state = _builder_state()
     for active_frame in reversed(builder.frames):
         entry = state["foreach_frames"].get(id(active_frame))
@@ -222,7 +230,35 @@ def _selected_pipe(pipe: object) -> tuple[tirx.Var, PipeNet, PipeSide]:
         frame, net, side = entry
         if any(var.same_as(pipe) for var in frame.vars):
             return pipe, net, side
-    raise ValueError("selected PipeRef can only be used inside its T.tt.foreach_src/dst region")
+    if any(var.same_as(pipe) for var, _, _ in state["foreach_vars"]):
+        raise ValueError("selected PipeRef can only be used inside its T.tt.foreach_src/dst region")
+    return None
+
+
+def _selected_pipe(pipe: object) -> tuple[tirx.Var, PipeNet, PipeSide]:
+    selected = _try_selected_pipe(pipe)
+    if selected is not None:
+        return selected
+    if not isinstance(pipe, tirx.Var):
+        raise TypeError("selected PipeRef must be the loop variable from T.tt.foreach_src/dst")
+    raise ValueError("selected PipeRef must be the loop variable from T.tt.foreach_src/dst")
+
+
+def _validate_pipe_payload(net: PipeNet, buffer: tirx.Buffer) -> None:
+    """Record and enforce the shape/dtype contract shared by one PipeNet."""
+
+    _, state = _builder_state()
+    for known_net, shape, dtype in state["payload_contracts"]:
+        if known_net is not net:
+            continue
+        if dtype != buffer.dtype or not ir.structural_equal(shape, buffer.shape):
+            raise ValueError(
+                "T.tt PipeNet payload shape/dtype mismatch: "
+                f"expected shape {shape} and dtype {dtype}, "
+                f"got shape {buffer.shape} and dtype {buffer.dtype}"
+            )
+        return
+    state["payload_contracts"].append((net, buffer.shape, buffer.dtype))
 
 
 def _pipe_coord(op_name: str, pipe: object) -> CoreExpr:
