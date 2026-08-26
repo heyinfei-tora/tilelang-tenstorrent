@@ -17,6 +17,7 @@ dictionary when you need options such as GPU architecture or CPU model. The most
 | `cutedsl` | NVIDIA CUTLASS/CuTe DSL backend. Requires `nvidia-cutlass-dsl`. |
 | `hip` | AMD GPUs via ROCm. Use a config dict for options such as `{"kind": "hip", "mcpu": "gfx90a"}`. |
 | `metal` | Apple Silicon GPUs (arm64 Macs). |
+| `tenstorrent` | Tenstorrent devices. Requires an explicit `arch` of `wormhole_b0` or `blackhole`; registration only, with TTL codegen not implemented yet. |
 | `llvm` | CPU execution. Use a config dict for options such as `{"kind": "llvm", "mtriple": "x86_64-linux-gnu"}`. |
 | `webgpu` | Browser / WebGPU runtimes. |
 | `c` | Emit plain C source for inspection or custom toolchains. |
@@ -41,12 +42,17 @@ same input forms:
 target = "auto"                                      # detect CUDA, HIP, or Metal
 target = "cuda"                                      # bare TVM target kind
 target = {"kind": "cuda", "arch": "sm_90"}           # target config dict
+target = {"kind": "tenstorrent", "arch": "wormhole_b0"}  # explicit Tenstorrent architecture
 target = tvm.target.Target({"kind": "cuda"})         # already-built TVM Target
 ```
 
 Use the bare string form for simple cases. Use a config dictionary when you need target attributes such as CUDA
 `arch`, CUDA `code`, HIP `mcpu`, or LLVM CPU options. Dictionary keys must be valid attributes for that target kind;
 invalid attributes are rejected when TVM constructs the target.
+
+Tenstorrent targets accept only the `tenstorrent` target key and require an explicit `arch` of `wormhole_b0` or
+`blackhole`. They are not included in `auto` detection. The backend route and `ttnn` execution contract are
+registered, but compiling a kernel currently fails explicitly because TTL source generation is not implemented.
 
 ## Default target
 
