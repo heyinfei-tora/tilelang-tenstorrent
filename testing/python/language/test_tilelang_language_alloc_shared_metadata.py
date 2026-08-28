@@ -1,6 +1,5 @@
 import pytest
 
-import tilelang
 from tilelang import language as T
 from tilelang import tvm
 
@@ -46,11 +45,11 @@ def test_alloc_shared_without_annotations_keeps_existing_ir_shape():
     assert _ALLOC_BUFFER_ANNOTATIONS not in blocks[0].annotations
 
 
-def test_alloc_shared_records_tt_metadata_by_buffer_identity():
+def test_alloc_shared_records_metadata_by_buffer_identity():
     kernel = _make_kernel(
         {
-            "tt.dfb_block_count": 2,
-            "tt.tile_shape": (32, 32),
+            "test.block_count": 2,
+            "test.tile_shape": (16, 32),
         }
     )
 
@@ -61,8 +60,8 @@ def test_alloc_shared_records_tt_metadata_by_buffer_identity():
     assert buffer.data in metadata_by_buffer
 
     metadata = metadata_by_buffer[buffer.data]
-    assert metadata["tt.dfb_block_count"].value == 2
-    assert [value.value for value in metadata["tt.tile_shape"]] == [32, 32]
+    assert metadata["test.block_count"] == 2
+    assert list(metadata["test.tile_shape"]) == [16, 32]
 
 
 def test_alloc_shared_keeps_metadata_separate_for_multiple_buffers():
@@ -72,12 +71,12 @@ def test_alloc_shared_keeps_metadata_separate_for_multiple_buffers():
             lhs = T.alloc_shared(
                 (64, 128),
                 T.bfloat16,
-                annotations={"tt.dfb_block_count": 1},
+                annotations={"test.buffer_id": 1},
             )
             rhs = T.alloc_shared(
                 (64, 128),
                 T.bfloat16,
-                annotations={"tt.dfb_block_count": 3},
+                annotations={"test.buffer_id": 3},
             )
             A[0, 0] = lhs[0, 0] + rhs[0, 0]
 
@@ -85,53 +84,15 @@ def test_alloc_shared_keeps_metadata_separate_for_multiple_buffers():
     assert len(block.alloc_buffers) == 2
     metadata_by_buffer = block.annotations[_ALLOC_BUFFER_ANNOTATIONS]
     first, second = block.alloc_buffers
-    assert metadata_by_buffer[first.data]["tt.dfb_block_count"].value == 1
-    assert metadata_by_buffer[second.data]["tt.dfb_block_count"].value == 3
+    assert metadata_by_buffer[first.data]["test.buffer_id"] == 1
+    assert metadata_by_buffer[second.data]["test.buffer_id"] == 3
 
 
-def test_lower_opaque_block_moves_metadata_to_alloc_buffer():
-    kernel = _make_kernel(
-        {
-            "tt.dfb_block_count": 2,
-            "tt.tile_shape": (32, 32),
-        }
-    )
-    mod = tvm.IRModule.from_expr(kernel)
-    lowered = tilelang.transform.LowerOpaqueBlock()(mod)
-    allocations = []
-
-    def collect(node):
-        if isinstance(node, tvm.tirx.AllocBuffer):
-            allocations.append(node)
-
-    tvm.tirx.stmt_functor.post_order_visit(lowered["kernel"].body, collect)
-    tt_allocations = [
-        alloc for alloc in allocations if "tt.dfb_block_count" in alloc.annotations
-    ]
-    assert len(tt_allocations) == 1
-    assert tt_allocations[0].annotations["tt.dfb_block_count"].value == 2
-    assert [
-        value.value for value in tt_allocations[0].annotations["tt.tile_shape"]
-    ] == [32, 32]
+def test_alloc_shared_rejects_non_mapping_annotations():
+    with pytest.raises(TypeError, match="must be a mapping"):
+        _make_kernel([("test.key", 1)])
 
 
-@pytest.mark.parametrize("block_count", [0, 33, 1.5, True])
-def test_alloc_shared_rejects_invalid_dfb_block_count(block_count):
-    with pytest.raises((TypeError, ValueError), match="tt.dfb_block_count"):
-        _make_kernel({"tt.dfb_block_count": block_count})
-
-
-@pytest.mark.parametrize("tile_shape", [(16, 32), (32,), (32, 0)])
-def test_alloc_shared_rejects_unsupported_tile_shape(tile_shape):
-    with pytest.raises((TypeError, ValueError), match="tt.tile_shape"):
-        _make_kernel({"tt.tile_shape": tile_shape})
-
-
-def test_alloc_shared_rejects_shape_not_divisible_by_tile():
-    with pytest.raises(ValueError, match="must be divisible"):
-        _make_kernel({"tt.tile_shape": (32, 32)}, shape=(48, 128))
-
-
-def test_alloc_shared_rejects_tensor_backed_in_phase_1():
-    with pytest.raises(NotImplementedError, match="tt.tensor_backed"):
-        _make_kernel({"tt.tensor_backed": {"tensor": object(), "byte_offset": 0}})
+def test_alloc_shared_rejects_non_string_annotation_keys():
+    with pytest.raises(TypeError, match="keys must be strings"):
+        _make_kernel({1: "value"})

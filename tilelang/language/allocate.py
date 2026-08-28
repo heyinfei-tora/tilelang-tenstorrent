@@ -33,13 +33,6 @@ from .proxy import Tensor, ptr as _ptr_sentinel
 
 
 _ALLOC_BUFFER_ANNOTATIONS = "tl.alloc_buffer_annotations"
-_TT_DFB_BLOCK_COUNT = "tt.dfb_block_count"
-_TT_TILE_SHAPE = "tt.tile_shape"
-_TT_TENSOR_BACKED = "tt.tensor_backed"
-_SUPPORTED_TT_ALLOC_SHARED_ANNOTATIONS = {
-    _TT_DFB_BLOCK_COUNT,
-    _TT_TILE_SHAPE,
-}
 
 
 def _with_span(buffer: Buffer) -> Buffer:
@@ -57,18 +50,7 @@ def _with_span(buffer: Buffer) -> Buffer:
     return buffer
 
 
-def _compile_time_int(value: Any, annotation: str) -> int:
-    if isinstance(value, bool):
-        raise TypeError(f"`{annotation}` must be a compile-time integer, not bool.")
-    if isinstance(value, int):
-        return value
-    if isinstance(value, IntImm):
-        return int(value.value)
-    raise TypeError(f"`{annotation}` must be a compile-time integer, got {type(value).__name__}.")
-
-
 def _normalize_alloc_shared_annotations(
-    buffer: Buffer,
     annotations: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     if annotations is None:
@@ -80,49 +62,6 @@ def _normalize_alloc_shared_annotations(
     for key in normalized:
         if not isinstance(key, str):
             raise TypeError("`alloc_shared` annotation keys must be strings.")
-        if key == _TT_TENSOR_BACKED:
-            raise NotImplementedError(
-                "`tt.tensor_backed` is not supported in the Phase 1 "
-                "alloc_shared metadata path."
-            )
-        if key.startswith("tt.") and key not in _SUPPORTED_TT_ALLOC_SHARED_ANNOTATIONS:
-            raise ValueError(f"Unsupported Tenstorrent alloc_shared annotation `{key}`.")
-
-    has_tt_metadata = any(key in normalized for key in _SUPPORTED_TT_ALLOC_SHARED_ANNOTATIONS)
-    if not has_tt_metadata:
-        return normalized
-
-    if _TT_DFB_BLOCK_COUNT in normalized:
-        block_count = _compile_time_int(
-            normalized[_TT_DFB_BLOCK_COUNT], _TT_DFB_BLOCK_COUNT
-        )
-        if not 1 <= block_count <= 32:
-            raise ValueError(f"`{_TT_DFB_BLOCK_COUNT}` must be in [1, 32], got {block_count}.")
-        normalized[_TT_DFB_BLOCK_COUNT] = IntImm("int32", block_count)
-
-    tile_shape_value = normalized.get(_TT_TILE_SHAPE, (32, 32))
-    if not isinstance(tile_shape_value, (tuple, list)) or len(tile_shape_value) != 2:
-        raise TypeError(f"`{_TT_TILE_SHAPE}` must be a pair of compile-time integers.")
-    tile_shape = tuple(_compile_time_int(value, _TT_TILE_SHAPE) for value in tile_shape_value)
-    if any(value <= 0 for value in tile_shape):
-        raise ValueError(f"`{_TT_TILE_SHAPE}` dimensions must be positive, got {tile_shape}.")
-    if tile_shape != (32, 32):
-        raise ValueError(f"Phase 1 only supports `{_TT_TILE_SHAPE}=(32, 32)`, got {tile_shape}.")
-    if _TT_TILE_SHAPE in normalized:
-        normalized[_TT_TILE_SHAPE] = [IntImm("int32", value) for value in tile_shape]
-
-    if len(buffer.shape) != 2:
-        raise ValueError(
-            "Tenstorrent DFB metadata requires a 2D shared buffer, "
-            f"got rank {len(buffer.shape)}."
-        )
-    for axis, (extent, tile_extent) in enumerate(zip(buffer.shape, tile_shape)):
-        if isinstance(extent, IntImm) and extent.value % tile_extent != 0:
-            raise ValueError(
-                f"Shared buffer shape axis {axis} ({extent.value}) must be divisible by "
-                f"`{_TT_TILE_SHAPE}` axis {axis} ({tile_extent})."
-            )
-
     return normalized
 
 
@@ -139,9 +78,8 @@ def alloc_shared(
         shape (tuple): The shape of the buffer to allocate
         dtype (str): The data type of the buffer (e.g., 'float32', 'int32')
         scope (str, optional): The memory scope. Defaults to "shared.dyn"
-        annotations (Mapping, optional): Per-buffer allocation metadata. The
-            Phase 1 Tenstorrent path supports ``tt.dfb_block_count`` and
-            ``tt.tile_shape``.
+        annotations (Mapping, optional): Per-buffer allocation metadata. Field
+            semantics are validated by the target backend that consumes them.
 
     Returns:
         T.Buffer: A TVM buffer object allocated in shared memory
@@ -151,7 +89,7 @@ def alloc_shared(
         # Because tilelang's merge smem pass cannot merge bool type currently.
         scope = "shared"
     buffer = _with_span(T.sblock_alloc_buffer(shape, dtype, scope=scope))
-    normalized_annotations = _normalize_alloc_shared_annotations(buffer, annotations)
+    normalized_annotations = _normalize_alloc_shared_annotations(annotations)
     if normalized_annotations:
         sblock_attr({_ALLOC_BUFFER_ANNOTATIONS: {buffer.data: normalized_annotations}})
     return buffer

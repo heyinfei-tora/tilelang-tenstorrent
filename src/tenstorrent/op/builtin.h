@@ -39,6 +39,15 @@ TVM_DLL const Op &pipe_dst_range();
 TVM_DLL const Op &pipe_send();
 TVM_DLL const Op &pipe_recv();
 
+/*!
+ * \brief Lowered NoC transfers with explicit compile-time Core coordinates.
+ *
+ * These ops are the contract between the Tenstorrent frontend lowering and
+ * later TTL code generation.  The first argument is a complete buffer region.
+ */
+TVM_DLL const Op &noc_send();
+TVM_DLL const Op &noc_recv();
+
 } // namespace tenstorrent
 } // namespace tl
 } // namespace tvm

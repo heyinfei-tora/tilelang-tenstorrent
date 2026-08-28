@@ -87,18 +87,6 @@ private:
     HandleAnnotations(new_block->annotations, &pragma_attrs, /*is_block=*/true,
                       new_block->alloc_buffers);
 
-    Map<Var, Map<String, Any>> alloc_buffer_annotations;
-    if (auto annotations =
-            new_block->annotations.Get(tl::attr::kAllocBufferAnnotations)) {
-      auto annotation_map =
-          annotations.value().try_cast<Map<Var, Map<String, Any>>>();
-      ICHECK(annotation_map)
-          << "Expected `" << tl::attr::kAllocBufferAnnotations
-          << "` to be a Map<Var, Map<String, Any>>, but got "
-          << annotations.value().GetTypeKey();
-      alloc_buffer_annotations = annotation_map.value();
-    }
-
     // Step 4. Handle allocations in reverse order
     for (size_t i = new_block->alloc_buffers.size(); i > 0; --i) {
       const Buffer &buffer = new_block->alloc_buffers[i - 1];
@@ -119,15 +107,6 @@ private:
       if (init_it != local_var_init_map_.end()) {
         const PrimExpr &init = (*init_it).second;
         allocate_annotations.Set(tl::attr::kLocalVarInit, init);
-      }
-      auto annotation_it = alloc_buffer_annotations.find(buffer->data);
-      if (annotation_it != alloc_buffer_annotations.end()) {
-        for (const auto &annotation : (*annotation_it).second) {
-          ICHECK(!allocate_annotations.count(annotation.first))
-              << "Duplicate allocation annotation `" << annotation.first
-              << "` for buffer " << buffer->name;
-          allocate_annotations.Set(annotation.first, annotation.second);
-        }
       }
       // Use AllocBuffer with annotations; buffer already carries shape info
       Buffer alloc_buf(buffer->data, buffer->dtype, allocation_shape,

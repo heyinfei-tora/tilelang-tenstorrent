@@ -47,6 +47,12 @@ TIR_DEFINE_TT_BUILTIN(pipe_send).set_num_inputs(2).set_attr<TCallEffectKind>(
 TIR_DEFINE_TT_BUILTIN(pipe_recv).set_num_inputs(2).set_attr<TCallEffectKind>(
     "TCallEffectKind", Integer(CallEffectKind::kOpaque));
 
+TIR_DEFINE_TT_BUILTIN(noc_send).set_num_inputs(5).set_attr<TCallEffectKind>(
+    "TCallEffectKind", Integer(CallEffectKind::kOpaque));
+
+TIR_DEFINE_TT_BUILTIN(noc_recv).set_num_inputs(3).set_attr<TCallEffectKind>(
+    "TCallEffectKind", Integer(CallEffectKind::kOpaque));
+
 #undef TIR_DEFINE_TT_BUILTIN
 
 } // namespace tenstorrent

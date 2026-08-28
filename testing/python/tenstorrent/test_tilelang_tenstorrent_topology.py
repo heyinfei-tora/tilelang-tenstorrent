@@ -1,10 +1,13 @@
 import json
 
 import pytest
-from tvm import ir, tirx
-from tvm.ir import Op
 
+from tilelang import tvm
 from tilelang.tenstorrent import language as T
+
+ir = tvm.ir
+tirx = tvm.tirx
+Op = tvm.ir.Op
 
 
 def _collect_calls_and_foreach_loops(func):
