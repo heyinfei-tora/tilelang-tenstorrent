@@ -291,7 +291,7 @@ and the selected execution backend decides whether and when it is invoked.
 | `tilelang/cpu` | `c`, `llvm` | CPU pipeline, codegen, and scalar CPU tile-op implementations. |
 | `tilelang/metal` | `metal` | Metal pipeline, codegen, host hook, and Metal language extensions. |
 | `tilelang/webgpu/backend.py` | `webgpu` | WebGPU compiler component registration. |
-| `tilelang/tenstorrent` | `tenstorrent` | Registration-only target route for `wormhole_b0` and `blackhole`; TTL codegen and TTNN execution are not implemented yet. |
+| `tilelang/tenstorrent` | `tenstorrent` | Experimental source-only TTL route for `wormhole_b0` and `blackhole`, with a TTNN adapter contract for the initial zero-argument point-to-point subset. |
 
 ## Common Backend Infrastructure
 

@@ -17,7 +17,7 @@ dictionary when you need options such as GPU architecture or CPU model. The most
 | `cutedsl` | NVIDIA CUTLASS/CuTe DSL backend. Requires `nvidia-cutlass-dsl`. |
 | `hip` | AMD GPUs via ROCm. Use a config dict for options such as `{"kind": "hip", "mcpu": "gfx90a"}`. |
 | `metal` | Apple Silicon GPUs (arm64 Macs). |
-| `tenstorrent` | Tenstorrent devices. Requires an explicit `arch` of `wormhole_b0` or `blackhole`; registration only, with TTL codegen not implemented yet. |
+| `tenstorrent` | Tenstorrent devices. Requires an explicit `arch` of `wormhole_b0` or `blackhole`; experimental source-only TTL support is available for a narrow point-to-point subset. |
 | `llvm` | CPU execution. Use a config dict for options such as `{"kind": "llvm", "mtriple": "x86_64-linux-gnu"}`. |
 | `webgpu` | Browser / WebGPU runtimes. |
 | `c` | Emit plain C source for inspection or custom toolchains. |
@@ -51,8 +51,18 @@ Use the bare string form for simple cases. Use a config dictionary when you need
 invalid attributes are rejected when TVM constructs the target.
 
 Tenstorrent targets accept only the `tenstorrent` target key and require an explicit `arch` of `wormhole_b0` or
-`blackhole`. They are not included in `auto` detection. The backend route and `ttnn` execution contract are
-registered, but compiling a kernel currently fails explicitly because TTL source generation is not implemented.
+`blackhole`. They are not included in `auto` detection. The experimental first version emits importable Python TTL
+source and loads its decorated operation through the `ttnn` execution adapter. It intentionally supports only one
+zero-argument kernel, one 32x32-tiled bfloat16 DFB, and one matched point-to-point transfer. Runtime tensor
+parameters, global tensor I/O, result allocation, collectives, compute expressions, and persistent TTNN artifacts
+are rejected explicitly.
+
+Hardware-free tests cover source structure and the adapter's injectable Build/load/launch contract. They do not
+establish that the generated source compiles in a particular TT-Lang release or runs correctly on hardware. Before
+using this target for device execution, validate the generated module with the matching TT-Lang compiler and verify
+TTNN tensor binding, device lifetime, Wormhole B0 or Blackhole launch, and numerical correctness.
+The zero-argument v1 artifact has no global tensor producer for its source DFB, so it is not yet claimed to be a
+deadlock-free hardware program.
 
 ## Default target
 

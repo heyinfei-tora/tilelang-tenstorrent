@@ -12,6 +12,7 @@ from tilelang.jit.adapter.cutedsl.kernel_cache import CuTeDSLKernelCache
 from tilelang.jit.adapter.cython.kernel_cache import CythonKernelCache
 from tilelang.jit.adapter.nvrtc.kernel_cache import NVRTCKernelCache
 from tilelang.jit.adapter.torch.kernel_cache import TorchKernelCache
+from tilelang.jit.adapter.ttnn.kernel_cache import TTNNKernelCache
 from tilelang.jit.adapter.kernel_cache import TVMFFIKernelCache
 from .kernel_cache import KernelCache
 
@@ -24,9 +25,7 @@ _dispatch_map: dict[str, KernelCache] = {
     "nvrtc": NVRTCKernelCache(),
     "cutedsl": CuTeDSLKernelCache(),
     "torch": TorchKernelCache(),
-    # Registration-only route: compilation fails at Tenstorrent TTL codegen
-    # before an adapter or persistent cache artifact can be created.
-    "ttnn": KernelCache(),
+    "ttnn": TTNNKernelCache(),
 }
 
 

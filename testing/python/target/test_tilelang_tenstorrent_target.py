@@ -7,7 +7,6 @@ from tilelang import tvm
 from tilelang.backend import create_backend_context, get_backend
 from tilelang.tenstorrent import execution_backend
 from tilelang.tenstorrent import language as T
-from tilelang.tenstorrent.codegen import TTL_CODEGEN_NOT_IMPLEMENTED
 
 
 def _target(arch: str = "wormhole_b0", *, keys: list[str] | None = None):
@@ -128,7 +127,7 @@ def test_tenstorrent_pipeline_splits_host_and_device(monkeypatch):
     assert str(device_target.attrs["arch"]) == "wormhole_b0"
 
 
-def test_tenstorrent_compile_fails_at_unimplemented_ttl_codegen(monkeypatch):
+def test_tenstorrent_compile_rejects_runtime_params_before_loading_ttnn(monkeypatch):
     monkeypatch.setattr(execution_backend.importlib.util, "find_spec", lambda _: object())
 
     @T.prim_func
@@ -136,7 +135,7 @@ def test_tenstorrent_compile_fails_at_unimplemented_ttl_codegen(monkeypatch):
         with T.Kernel(1, 1, threads=1):
             A[0] = 0.0
 
-    with pytest.raises(NotImplementedError, match=TTL_CODEGEN_NOT_IMPLEMENTED):
+    with pytest.raises(NotImplementedError, match="runtime parameters or global tensor access"):
         tilelang.compile(
             main,
             target={"kind": "tenstorrent", "arch": "wormhole_b0"},
