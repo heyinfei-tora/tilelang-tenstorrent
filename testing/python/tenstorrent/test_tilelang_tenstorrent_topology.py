@@ -7,6 +7,25 @@ from tvm.ir import Op
 from tilelang.tenstorrent import language as T
 
 
+def test_comm_namespace_is_exported():
+    assert "comm" in T.__all__
+    assert "tt" not in T.__all__
+    assert set(T.comm.__all__) == {
+        "CoreRange",
+        "Pipe",
+        "PipeNet",
+        "foreach_dst",
+        "foreach_src",
+        "is_active",
+        "is_dst",
+        "is_src",
+        "pipe_dst",
+        "pipe_dst_range",
+        "pipe_src",
+    }
+    assert callable(T.comm_reducer)
+
+
 def _collect_calls_and_foreach_loops(func):
     calls = []
     loops = []
@@ -33,29 +52,29 @@ def _collect_op_calls(func, op_name):
 
 
 def test_topology_primitives_construct_ordered_ir():
-    gather = T.tt.PipeNet(
+    gather = T.comm.PipeNet(
         [
-            T.tt.Pipe(src=(1, 0), dst=(0, 0)),
-            T.tt.Pipe(src=(2, 0), dst=(0, 0)),
-            T.tt.Pipe(src=(2, 0), dst=(0, 0)),
+            T.comm.Pipe(src=(1, 0), dst=(0, 0)),
+            T.comm.Pipe(src=(2, 0), dst=(0, 0)),
+            T.comm.Pipe(src=(2, 0), dst=(0, 0)),
         ]
     )
 
     @T.prim_func
     def main():
         with T.Kernel(4, 1, threads=1):
-            if T.tt.is_src(gather):
+            if T.comm.is_src(gather):
                 T.evaluate(0)
-            if T.tt.is_dst(gather):
+            if T.comm.is_dst(gather):
                 T.evaluate(0)
-            if T.tt.is_active(gather):
+            if T.comm.is_active(gather):
                 T.evaluate(0)
-            for pipe in T.tt.foreach_src(gather):
-                src_x, src_y = T.tt.pipe_src(pipe)
-                dst_x, dst_y = T.tt.pipe_dst(pipe)
+            for pipe in T.comm.foreach_src(gather):
+                src_x, src_y = T.comm.pipe_src(pipe)
+                dst_x, dst_y = T.comm.pipe_dst(pipe)
                 T.evaluate(src_x + src_y + dst_x + dst_y)
-            for pipe in T.tt.foreach_dst(gather):
-                src_x, _ = T.tt.pipe_src(pipe)
+            for pipe in T.comm.foreach_dst(gather):
+                src_x, _ = T.comm.pipe_src(pipe)
                 T.evaluate(src_x)
 
     calls, loops = _collect_calls_and_foreach_loops(main)
@@ -73,13 +92,13 @@ def test_topology_primitives_construct_ordered_ir():
 
 
 def test_collective_range_accessor_constructs_ir():
-    broadcast = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=T.tt.CoreRange(begin=(1, 0), end=(4, 1)))])
+    broadcast = T.comm.PipeNet([T.comm.Pipe(src=(0, 0), dst=T.comm.CoreRange(begin=(1, 0), end=(4, 1)))])
 
     @T.prim_func
     def main():
         with T.Kernel(4, 1, threads=1):
-            for pipe in T.tt.foreach_src(broadcast):
-                begin, end = T.tt.pipe_dst_range(pipe)
+            for pipe in T.comm.foreach_src(broadcast):
+                begin, end = T.comm.pipe_dst_range(pipe)
                 T.evaluate(begin[0] + begin[1] + end[0] + end[1])
 
     calls, loops = _collect_calls_and_foreach_loops(main)
@@ -92,14 +111,14 @@ def test_collective_range_accessor_constructs_ir():
 @pytest.mark.parametrize(
     "factory, error, match",
     [
-        (lambda: T.tt.CoreRange((0, 0), (0, 1)), ValueError, "non-empty"),
-        (lambda: T.tt.Pipe(src=(0, 0), dst=(True, 1)), TypeError, "compile-time integers"),
-        (lambda: T.tt.PipeNet([]), ValueError, "at least one"),
+        (lambda: T.comm.CoreRange((0, 0), (0, 1)), ValueError, "non-empty"),
+        (lambda: T.comm.Pipe(src=(0, 0), dst=(True, 1)), TypeError, "compile-time integers"),
+        (lambda: T.comm.PipeNet([]), ValueError, "at least one"),
         (
-            lambda: T.tt.PipeNet(
+            lambda: T.comm.PipeNet(
                 [
-                    T.tt.Pipe(src=(0, 0), dst=(1, 0)),
-                    T.tt.Pipe(src=(0, 0), dst=T.tt.CoreRange((1, 0), (2, 1))),
+                    T.comm.Pipe(src=(0, 0), dst=(1, 0)),
+                    T.comm.Pipe(src=(0, 0), dst=T.comm.CoreRange((1, 0), (2, 1))),
                 ]
             ),
             ValueError,
@@ -113,55 +132,55 @@ def test_invalid_topologies_fail_at_construction(factory, error, match):
 
 
 def test_topology_must_fit_static_2d_kernel_grid():
-    outside = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(2, 0))])
+    outside = T.comm.PipeNet([T.comm.Pipe(src=(0, 0), dst=(2, 0))])
 
     with pytest.raises(ValueError, match="outside T.Kernel grid"):
 
         @T.prim_func
         def outside_grid():
             with T.Kernel(2, 1, threads=1):
-                T.evaluate(T.tt.is_dst(outside))
+                T.evaluate(T.comm.is_dst(outside))
 
     with pytest.raises(ValueError, match="require a 2-D"):
 
         @T.prim_func
         def one_dimensional_grid():
             with T.Kernel(2, threads=1):
-                T.evaluate(T.tt.is_dst(outside))
+                T.evaluate(T.comm.is_dst(outside))
 
 
 def test_selected_pipe_accessors_validate_region_and_contract():
-    point_to_point = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
-    collective = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=T.tt.CoreRange(begin=(1, 0), end=(2, 1)))])
+    point_to_point = T.comm.PipeNet([T.comm.Pipe(src=(0, 0), dst=(1, 0))])
+    collective = T.comm.PipeNet([T.comm.Pipe(src=(0, 0), dst=T.comm.CoreRange(begin=(1, 0), end=(2, 1)))])
 
     with pytest.raises(ValueError, match="requires a collective"):
 
         @T.prim_func
         def wrong_contract():
             with T.Kernel(2, 1, threads=1):
-                for pipe in T.tt.foreach_src(point_to_point):
-                    T.tt.pipe_dst_range(pipe)
+                for pipe in T.comm.foreach_src(point_to_point):
+                    T.comm.pipe_dst_range(pipe)
 
     with pytest.raises(ValueError, match="requires a point-to-point"):
 
         @T.prim_func
         def other_wrong_contract():
             with T.Kernel(2, 1, threads=1):
-                for pipe in T.tt.foreach_src(collective):
-                    T.tt.pipe_dst(pipe)
+                for pipe in T.comm.foreach_src(collective):
+                    T.comm.pipe_dst(pipe)
 
 
 def test_copy_constructs_pipe_send_and_recv_with_complete_regions():
-    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+    net = T.comm.PipeNet([T.comm.Pipe(src=(0, 0), dst=(1, 0))])
 
     @T.prim_func
     def main():
         with T.Kernel(2, 1, threads=1):
             send_block = T.alloc_shared((4, 8), T.float32)
             recv_block = T.alloc_shared((4, 8), T.float32)
-            for pipe in T.tt.foreach_src(net):
+            for pipe in T.comm.foreach_src(net):
                 T.copy(send_block, pipe)
-            for pipe in T.tt.foreach_dst(net):
+            for pipe in T.comm.foreach_dst(net):
                 T.copy(pipe, recv_block)
 
     calls, loops = _collect_calls_and_foreach_loops(main)
@@ -196,7 +215,7 @@ def test_copy_without_pipe_ref_delegates_to_common_copy():
 
 
 def test_copy_rejects_wrong_pipe_direction():
-    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+    net = T.comm.PipeNet([T.comm.Pipe(src=(0, 0), dst=(1, 0))])
 
     with pytest.raises(ValueError, match="send requires.*foreach_src"):
 
@@ -204,7 +223,7 @@ def test_copy_rejects_wrong_pipe_direction():
         def send_from_destination():
             with T.Kernel(2, 1, threads=1):
                 block = T.alloc_shared((4, 8), T.float32)
-                for pipe in T.tt.foreach_dst(net):
+                for pipe in T.comm.foreach_dst(net):
                     T.copy(block, pipe)
 
     with pytest.raises(ValueError, match="receive requires.*foreach_dst"):
@@ -213,12 +232,12 @@ def test_copy_rejects_wrong_pipe_direction():
         def receive_at_source():
             with T.Kernel(2, 1, threads=1):
                 block = T.alloc_shared((4, 8), T.float32)
-                for pipe in T.tt.foreach_src(net):
+                for pipe in T.comm.foreach_src(net):
                     T.copy(pipe, block)
 
 
 def test_copy_rejects_pipe_ref_after_foreach_region():
-    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+    net = T.comm.PipeNet([T.comm.Pipe(src=(0, 0), dst=(1, 0))])
     captured = []
 
     def capture(pipe):
@@ -231,20 +250,20 @@ def test_copy_rejects_pipe_ref_after_foreach_region():
         def escaped_pipe():
             with T.Kernel(2, 1, threads=1):
                 block = T.alloc_shared((4, 8), T.float32)
-                for pipe in T.tt.foreach_src(net):
+                for pipe in T.comm.foreach_src(net):
                     T.evaluate(capture(pipe))
                 T.copy(block, captured[0])
 
 
 def test_copy_rejects_global_and_partial_pipe_payloads():
-    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+    net = T.comm.PipeNet([T.comm.Pipe(src=(0, 0), dst=(1, 0))])
 
     with pytest.raises(ValueError, match="shared or shared.dyn"):
 
         @T.prim_func
         def global_payload(src: T.Tensor((4, 8), T.float32)):
             with T.Kernel(2, 1, threads=1):
-                for pipe in T.tt.foreach_src(net):
+                for pipe in T.comm.foreach_src(net):
                     T.copy(src, pipe)
 
     with pytest.raises(TypeError, match="complete tirx.Buffer"):
@@ -253,20 +272,20 @@ def test_copy_rejects_global_and_partial_pipe_payloads():
         def partial_payload():
             with T.Kernel(2, 1, threads=1):
                 block = T.alloc_shared((4, 8), T.float32)
-                for pipe in T.tt.foreach_src(net):
+                for pipe in T.comm.foreach_src(net):
                     T.copy(block[0, 0], pipe)
 
 
 def test_copy_rejects_pipe_to_pipe_transfer():
-    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+    net = T.comm.PipeNet([T.comm.Pipe(src=(0, 0), dst=(1, 0))])
 
     with pytest.raises(TypeError, match="PipeRef-to-PipeRef"):
 
         @T.prim_func
         def pipe_to_pipe():
             with T.Kernel(2, 1, threads=1):
-                for send_pipe in T.tt.foreach_src(net):
-                    for recv_pipe in T.tt.foreach_dst(net):
+                for send_pipe in T.comm.foreach_src(net):
+                    for recv_pipe in T.comm.foreach_dst(net):
                         T.copy(send_pipe, recv_pipe)
 
 
@@ -278,7 +297,7 @@ def test_copy_rejects_pipe_to_pipe_transfer():
     ],
 )
 def test_copy_rejects_pipenet_payload_shape_or_dtype_mismatch(recv_shape, recv_dtype):
-    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+    net = T.comm.PipeNet([T.comm.Pipe(src=(0, 0), dst=(1, 0))])
 
     with pytest.raises(ValueError, match="payload shape/dtype mismatch"):
 
@@ -287,14 +306,14 @@ def test_copy_rejects_pipenet_payload_shape_or_dtype_mismatch(recv_shape, recv_d
             with T.Kernel(2, 1, threads=1):
                 send_block = T.alloc_shared((4, 8), T.float32)
                 recv_block = T.alloc_shared(recv_shape, recv_dtype)
-                for pipe in T.tt.foreach_src(net):
+                for pipe in T.comm.foreach_src(net):
                     T.copy(send_block, pipe)
-                for pipe in T.tt.foreach_dst(net):
+                for pipe in T.comm.foreach_dst(net):
                     T.copy(pipe, recv_block)
 
 
 def test_copy_rejects_non_default_options_for_pipe_transfer():
-    net = T.tt.PipeNet([T.tt.Pipe(src=(0, 0), dst=(1, 0))])
+    net = T.comm.PipeNet([T.comm.Pipe(src=(0, 0), dst=(1, 0))])
 
     with pytest.raises(ValueError, match="non-default copy options"):
 
@@ -302,5 +321,5 @@ def test_copy_rejects_non_default_options_for_pipe_transfer():
         def configured_pipe_copy():
             with T.Kernel(2, 1, threads=1):
                 block = T.alloc_shared((4, 8), T.float32)
-                for pipe in T.tt.foreach_src(net):
+                for pipe in T.comm.foreach_src(net):
                     T.copy(block, pipe, coalesced_width=4)

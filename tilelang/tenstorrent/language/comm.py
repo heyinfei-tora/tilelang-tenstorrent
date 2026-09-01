@@ -1,4 +1,8 @@
-"""Compile-time multi-Core communication topology primitives for Tenstorrent."""
+"""Compile-time multi-Core communication topology primitives for Tenstorrent.
+
+Here ``comm`` means communication. It is unrelated to ``T.comm_reducer``,
+where ``comm`` abbreviates commutative.
+"""
 
 from __future__ import annotations
 
@@ -96,7 +100,7 @@ class PipeNet:
 def _builder_state() -> tuple[Builder, dict]:
     builder = Builder.current()
     if builder is None:
-        raise RuntimeError("T.tt topology primitives can only be used while constructing a TileLang PrimFunc")
+        raise RuntimeError("T.comm topology primitives can only be used while constructing a TileLang PrimFunc")
     state = getattr(builder, "_tt_topology_state", None)
     if state is None:
         state = {
@@ -139,15 +143,15 @@ def _encode_pipenet(net: PipeNet) -> str:
 def _validate_in_grid(net: PipeNet) -> None:
     launch = KernelLaunchFrame.Current()
     if launch is None:
-        raise RuntimeError("T.tt topology primitives must be used inside T.Kernel")
+        raise RuntimeError("T.comm topology primitives must be used inside T.Kernel")
     block_frames = launch.frames[0:-4]
     if len(block_frames) != 2:
-        raise ValueError(f"T.tt topology primitives require a 2-D T.Kernel grid, got {len(block_frames)} dimensions")
+        raise ValueError(f"T.comm topology primitives require a 2-D T.Kernel grid, got {len(block_frames)} dimensions")
     grid: list[int] = []
     for block_frame in block_frames:
         extent = block_frame.doms[0].extent
         if not isinstance(extent, tirx.IntImm):
-            raise ValueError("T.tt topology primitives require compile-time constant T.Kernel grid extents")
+            raise ValueError("T.comm topology primitives require compile-time constant T.Kernel grid extents")
         grid.append(int(extent.value))
 
     def check_coord(coord: CoreCoord, name: str) -> None:
@@ -167,7 +171,7 @@ def _validate_in_grid(net: PipeNet) -> None:
 
 def _require_pipenet(net: object) -> PipeNet:
     if not isinstance(net, PipeNet):
-        raise TypeError(f"expected a T.tt.PipeNet, got {type(net).__name__}")
+        raise TypeError(f"expected a T.comm.PipeNet, got {type(net).__name__}")
     _validate_in_grid(net)
     return net
 
@@ -231,7 +235,7 @@ def _try_selected_pipe(pipe: object) -> tuple[tirx.Var, PipeNet, PipeSide] | Non
         if any(var.same_as(pipe) for var in frame.vars):
             return pipe, net, side
     if any(var.same_as(pipe) for var, _, _ in state["foreach_vars"]):
-        raise ValueError("selected PipeRef can only be used inside its T.tt.foreach_src/dst region")
+        raise ValueError("selected PipeRef can only be used inside its T.comm.foreach_src/dst region")
     return None
 
 
@@ -240,8 +244,8 @@ def _selected_pipe(pipe: object) -> tuple[tirx.Var, PipeNet, PipeSide]:
     if selected is not None:
         return selected
     if not isinstance(pipe, tirx.Var):
-        raise TypeError("selected PipeRef must be the loop variable from T.tt.foreach_src/dst")
-    raise ValueError("selected PipeRef must be the loop variable from T.tt.foreach_src/dst")
+        raise TypeError("selected PipeRef must be the loop variable from T.comm.foreach_src/dst")
+    raise ValueError("selected PipeRef must be the loop variable from T.comm.foreach_src/dst")
 
 
 def _validate_pipe_payload(net: PipeNet, buffer: tirx.Buffer) -> None:
@@ -253,7 +257,7 @@ def _validate_pipe_payload(net: PipeNet, buffer: tirx.Buffer) -> None:
             continue
         if dtype != buffer.dtype or not ir.structural_equal(shape, buffer.shape):
             raise ValueError(
-                "T.tt PipeNet payload shape/dtype mismatch: "
+                "T.comm PipeNet payload shape/dtype mismatch: "
                 f"expected shape {shape} and dtype {dtype}, "
                 f"got shape {buffer.shape} and dtype {buffer.dtype}"
             )
@@ -281,7 +285,7 @@ def pipe_dst(pipe: object) -> CoreExpr:
 
     _, net, _ = _selected_pipe(pipe)
     if net.kind != "point_to_point":
-        raise ValueError("T.tt.pipe_dst requires a point-to-point PipeNet")
+        raise ValueError("T.comm.pipe_dst requires a point-to-point PipeNet")
     return _pipe_coord("tl.tt.pipe_dst", pipe)
 
 
@@ -290,7 +294,7 @@ def pipe_dst_range(pipe: object) -> tuple[CoreExpr, CoreExpr]:
 
     selected_pipe, net, _ = _selected_pipe(pipe)
     if net.kind != "collective":
-        raise ValueError("T.tt.pipe_dst_range requires a collective PipeNet")
+        raise ValueError("T.comm.pipe_dst_range requires a collective PipeNet")
     op = tirx.op.Op.get("tl.tt.pipe_dst_range")
 
     def endpoint(which: int) -> CoreExpr:

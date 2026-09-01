@@ -54,6 +54,29 @@ Tenstorrent targets accept only the `tenstorrent` target key and require an expl
 `blackhole`. They are not included in `auto` detection. The backend route and `ttnn` execution contract are
 registered, but compiling a kernel currently fails explicitly because TTL source generation is not implemented.
 
+Tenstorrent's language facade exposes inter-Core communication topology under `T.comm`:
+
+```python
+from tilelang.tenstorrent import language as T
+
+net = T.comm.PipeNet([
+    T.comm.Pipe(
+        src=(0, 0),
+        dst=T.comm.CoreRange(begin=(1, 0), end=(4, 1)),
+    ),
+])
+
+for pipe in T.comm.foreach_src(net):
+    T.copy(send_block, pipe)
+
+for pipe in T.comm.foreach_dst(net):
+    T.copy(pipe, recv_block)
+```
+
+`T.comm` describes communication endpoints, edges, topology, and selected `PipeRef` values. `T.copy` remains the
+data-movement primitive. The internal target-specific IR names remain under `tl.tt.*`. This namespace is unrelated
+to `T.comm_reducer`, where `comm` means commutative rather than communication.
+
 ## Default target
 
 If you do not pass `target=...`, TileLang reads `TILELANG_DEFAULT_TARGET`. When the environment variable is unset,

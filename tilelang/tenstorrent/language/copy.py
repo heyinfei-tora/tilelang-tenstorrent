@@ -10,7 +10,7 @@ from tilelang._typing import BufferLikeType
 from tilelang.language.copy_op import copy as _common_copy
 from tilelang.utils.language import to_buffer_region
 
-from . import tt
+from . import comm
 
 
 def _reject_pipe_copy_options(
@@ -55,8 +55,8 @@ def copy(
 ) -> tirx.PrimExpr | tirx.Stmt:
     """Copy buffers normally, or transfer a complete shared buffer via PipeRef."""
 
-    src_pipe = tt._try_selected_pipe(src)
-    dst_pipe = tt._try_selected_pipe(dst)
+    src_pipe = comm._try_selected_pipe(src)
+    dst_pipe = comm._try_selected_pipe(dst)
     if src_pipe is None and dst_pipe is None:
         return _common_copy(
             src,
@@ -83,17 +83,17 @@ def copy(
     if dst_pipe is not None:
         selected_pipe, net, side = dst_pipe
         if side != "src":
-            raise ValueError("T.copy send requires a PipeRef from T.tt.foreach_src")
+            raise ValueError("T.copy send requires a PipeRef from T.comm.foreach_src")
         payload = _validate_payload(src)
-        tt._validate_pipe_payload(net, payload)
+        comm._validate_pipe_payload(net, payload)
         region = to_buffer_region(payload, access_type="r", extents=list(payload.shape))
         return tirx.call_intrin("handle", tirx.op.Op.get("tl.tt.pipe_send"), region, selected_pipe)
 
     selected_pipe, net, side = src_pipe
     if side != "dst":
-        raise ValueError("T.copy receive requires a PipeRef from T.tt.foreach_dst")
+        raise ValueError("T.copy receive requires a PipeRef from T.comm.foreach_dst")
     payload = _validate_payload(dst)
-    tt._validate_pipe_payload(net, payload)
+    comm._validate_pipe_payload(net, payload)
     region = to_buffer_region(payload, access_type="w", extents=list(payload.shape))
     return tirx.call_intrin("handle", tirx.op.Op.get("tl.tt.pipe_recv"), selected_pipe, region)
 
