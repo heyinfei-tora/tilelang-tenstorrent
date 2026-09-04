@@ -130,3 +130,5 @@ uv.lock
 
 # local experiments
 /hyf-test/
+/examples/tenstorrent/
+/testing/python/tenstorrent/
