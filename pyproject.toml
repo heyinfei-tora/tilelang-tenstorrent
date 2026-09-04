@@ -98,7 +98,7 @@ dev = [
 ]
 
 [tool.scikit-build]
-wheel.py-api = "cp38"
+wheel.py-api = "cp310"
 cmake.version = ">=3.26.1"
 build-dir = "build"
 

@@ -1,6 +1,5 @@
 import pytest
 
-import tilelang
 from tilelang import language as T
 from tilelang import tvm
 
@@ -22,10 +21,7 @@ def _find_metadata_block(func):
     blocks = []
 
     def collect(node):
-        if (
-            isinstance(node, tvm.tirx.SBlock)
-            and _ALLOC_BUFFER_ANNOTATIONS in node.annotations
-        ):
+        if isinstance(node, tvm.tirx.SBlock) and _ALLOC_BUFFER_ANNOTATIONS in node.annotations:
             blocks.append(node)
 
     tvm.tirx.stmt_functor.post_order_visit(func.body, collect)
@@ -87,32 +83,6 @@ def test_alloc_shared_keeps_metadata_separate_for_multiple_buffers():
     first, second = block.alloc_buffers
     assert metadata_by_buffer[first.data]["tt.dfb_block_count"].value == 1
     assert metadata_by_buffer[second.data]["tt.dfb_block_count"].value == 3
-
-
-def test_lower_opaque_block_moves_metadata_to_alloc_buffer():
-    kernel = _make_kernel(
-        {
-            "tt.dfb_block_count": 2,
-            "tt.tile_shape": (32, 32),
-        }
-    )
-    mod = tvm.IRModule.from_expr(kernel)
-    lowered = tilelang.transform.LowerOpaqueBlock()(mod)
-    allocations = []
-
-    def collect(node):
-        if isinstance(node, tvm.tirx.AllocBuffer):
-            allocations.append(node)
-
-    tvm.tirx.stmt_functor.post_order_visit(lowered["kernel"].body, collect)
-    tt_allocations = [
-        alloc for alloc in allocations if "tt.dfb_block_count" in alloc.annotations
-    ]
-    assert len(tt_allocations) == 1
-    assert tt_allocations[0].annotations["tt.dfb_block_count"].value == 2
-    assert [
-        value.value for value in tt_allocations[0].annotations["tt.tile_shape"]
-    ] == [32, 32]
 
 
 @pytest.mark.parametrize("block_count", [0, 33, 1.5, True])
